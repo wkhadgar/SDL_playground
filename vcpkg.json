@@ -9,5 +9,8 @@
     "name" : "sdl2-image",
     "version>=" : "2.6.3",
     "$comment" : "    find_package(SDL2_image CONFIG REQUIRED)\n\n    target_link_libraries(main PRIVATE $<IF:$<TARGET_EXISTS:SDL2_image::SDL2_image>,SDL2_image::SDL2_image,SDL2_image::SDL2_image-static>)\n"
+  }, {
+    "name" : "sdl2-gfx",
+    "version>=" : "1.0.4#10"
   } ]
 }
