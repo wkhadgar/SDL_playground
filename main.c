@@ -1,147 +1,233 @@
 #include <SDL.h>
-#include "SDL_image.h"
-#include "SDL2_gfxPrimitives.h"
+#include <SDL_timer.h>
+#include <SDL_image.h>
 #include <stdbool.h>
-#include "simulation/bodies.h"
+#include <stdlib.h>
+#include "vectors.h"
+#include "bodies.h"
 
-#define SCR_WIDTH 1000
-#define SCR_HEIGHT 800
+#define SCR_WIDTH 1500
+#define SCR_HEIGHT 1000
 
-#define ELLIPSE_PRECISION 5
+#define PLANT_INIT_AMOUNT 5
+#define HERB_INIT_AMOUNT 1000
+#define CARN_INIT_AMOUNT 10
 
-typedef enum __attribute__((packed)) {
-	SPECIES_DEFAULT = 0,
+typedef enum {
+	SPECIES_PLANT = 0,
+	SPECIES_HERB,
+	SPECIES_CARN,
 	
 	SPECIES_AMOUNT,
 } species_t;
 
-typedef enum __attribute__((packed)) {
-	COLORS_BLACK,
-	COLORS_WHITE,
-	COLORS_YELLOW,
+
+SDL_Texture* texture_from_img(SDL_Renderer* rend, char* path) {
+	SDL_Surface* surf = IMG_Load(path);
+	if (surf == NULL) {
+		printf("%s\n", SDL_GetError());
+	}
+	SDL_Texture* tex = SDL_CreateTextureFromSurface(rend, surf);
+	if (tex == NULL) {
+		printf("%s\n", SDL_GetError());
+	}
+	SDL_FreeSurface(surf);
+	return tex;
+}
+
+typedef struct body_list {
+	Body* this;
+	struct body_list* next;
+	struct body_list* prev;
+} body_list_t;
+
+struct field {
+	body_list_t* species_heads[SPECIES_AMOUNT];
 	
-	COLORS_AMOUNT,
-} colors_t;
-
-typedef struct {
-	uint8_t r;
-	uint8_t g;
-	uint8_t b;
-	uint8_t a;
-} color_t;
-
-const color_t colors[COLORS_AMOUNT] = {
-		[COLORS_BLACK] =  {0, 0, 0, 0},
-		[COLORS_WHITE] =  {255, 255, 255, 0},
-		[COLORS_YELLOW] = {255, 255, 0, 0},
+} field = {
+		.species_heads = {NULL},
 };
 
-void set_render_color(SDL_Renderer* render, color_t color) {
-	SDL_SetRenderDrawColor(render, color.r, color.g, color.b, color.a);
+void add_body_node(Body* body, species_t species) {
+	body_list_t* new_body = (body_list_t*) malloc(sizeof(body_list_t));
+	new_body->this = body;
+	new_body->next = field.species_heads[species];
+	new_body->prev = NULL;
+	
+	field.species_heads[species] = new_body;
 }
 
-void fill_screen(SDL_Renderer* renderer, color_t color) {
-	set_render_color(renderer, color);
-	SDL_RenderClear(renderer);
-}
+int init_amounts[SPECIES_AMOUNT] = {
+		[SPECIES_PLANT] = PLANT_INIT_AMOUNT,
+		[SPECIES_HERB] = HERB_INIT_AMOUNT,
+		[SPECIES_CARN] = CARN_INIT_AMOUNT,
+};
 
-void sdl_ellipse(SDL_Renderer* r, int x0, int y0, int radiusX, int radiusY) {
-	
-	float pih = M_PI / 2.0; //half of pi
-	float theta = 0;     // angle that will be increased each loop
-	
-	//starting point
-	int x = (int) (radiusX * cos(theta));//start point
-	int y = (int) (radiusY * sin(theta));//start point
-	int x1 = x;
-	int y1 = y;
-	
-	//repeat until theta >= 90;
-	float step = pih / (float) ELLIPSE_PRECISION; // amount to add to theta each time (degrees)
-	for (theta = step; theta <= pih; theta += step)//step through only a 90 arc (1 quadrant)
-	{
-		//get new point location
-		x1 = (int) (((float) radiusX * cosf(theta)) + 0.5); //new point (+.5 is a quick rounding method)
-		y1 = (int) (((float) radiusY * sinf(theta)) + 0.5); //new point (+.5 is a quick rounding method)
-		
-		//draw line from previous point to new point, ONLY if point incremented
-		if ((x != x1) || (y != y1))//only draw if coordinate changed
-		{
-			SDL_RenderDrawLine(r, x0 + x, y0 - y, x0 + x1, y0 - y1);//quadrant TR
-			SDL_RenderDrawLine(r, x0 - x, y0 - y, x0 - x1, y0 - y1);//quadrant TL
-			SDL_RenderDrawLine(r, x0 - x, y0 + y, x0 - x1, y0 + y1);//quadrant BL
-			SDL_RenderDrawLine(r, x0 + x, y0 + y, x0 + x1, y0 + y1);//quadrant BR
-		}
-		//save previous points
-		x = x1;//save new previous point
-		y = y1;//save new previous point
-	}
-	//arc did not finish because of rounding, so finish the arc
-	if (x != 0) {
-		x = 0;
-		SDL_RenderDrawLine(r, x0 + x, y0 - y, x0 + x1, y0 - y1);//quadrant TR
-		SDL_RenderDrawLine(r, x0 - x, y0 - y, x0 - x1, y0 - y1);//quadrant TL
-		SDL_RenderDrawLine(r, x0 - x, y0 + y, x0 - x1, y0 + y1);//quadrant BL
-		SDL_RenderDrawLine(r, x0 + x, y0 + y, x0 + x1, y0 + y1);//quadrant BR
-	}
-}
+int init_forces[SPECIES_AMOUNT] = {
+		[SPECIES_PLANT] = 1,
+		[SPECIES_HERB] = 6,
+		[SPECIES_CARN] = 4,
+};
 
-void draw_body(SDL_Renderer* renderer, Body body) {
-	set_render_color(renderer, colors[COLORS_YELLOW]);
-	sdl_ellipse(renderer, body.pos.x, body.pos.y, body.mass, body.mass);
-}
 
-int main(int argc, char* argv[]) {
-	SDL_Event event;
-	SDL_Renderer* renderer;
-	SDL_Window* window;
-	
-	Vector2 mouse_pos;
-	int mouse_x, mouse_y;
-	bool mouse_pressed = false;
-	
-	SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER);
-	SDL_CreateWindowAndRenderer(SCR_WIDTH, SCR_HEIGHT, 0, &window, &renderer);
-	
-	
-	Body seeker = {
-			.velocity = {0},
-			.pos = {SCR_WIDTH / 2, SCR_HEIGHT / 2},
-			.mass = 5,
-			.health = 100,
-	};
-	
-	while (1) {
-		fill_screen(renderer, colors[COLORS_BLACK]);
+int init_speeds[SPECIES_AMOUNT] = {
+		[SPECIES_PLANT] = 1,
+		[SPECIES_HERB] = 3,
+		[SPECIES_CARN] = 5,
+};
+
+
+void field_init(SDL_Renderer* rend) {
+	for (species_t i = 0; i < SPECIES_AMOUNT; i++) {
+		SDL_Texture* tex;
 		
-		if (SDL_PollEvent(&event) && event.type == SDL_QUIT) {
-			break;
-		}
-		
-		SDL_GetMouseState(&mouse_x, &mouse_y);
-		mouse_pos.x = mouse_x;
-		mouse_pos.y = mouse_y;
-		
-		switch (event.type) {
-			case SDL_MOUSEBUTTONDOWN:
-				mouse_pressed = !mouse_pressed;
+		switch (i) {
+			case SPECIES_PLANT:
+				tex = texture_from_img(rend, "C:\\repos\\SDL_playground\\assets\\sand_grain.png");
 				break;
-			case SDL_MOUSEBUTTONUP:
+			case SPECIES_HERB:
+				tex = texture_from_img(rend, "C:\\repos\\SDL_playground\\assets\\fish.png");
+				break;
+			case SPECIES_CARN:
+				tex = texture_from_img(rend, "C:\\repos\\SDL_playground\\assets\\black.png");
+				break;
 			default:
 				break;
 		}
 		
-		if (mouse_pressed) {
-			body_seek(&seeker, mouse_pos);
+		for (int j = 0; j < init_amounts[i]; j++) {
+			add_body_node(body_new(rand() % SCR_WIDTH, rand() % SCR_HEIGHT, 5, tex, init_forces[i], init_speeds[i]), i);
+		}
+	}
+}
+
+void draw_bodies(SDL_Renderer* rend) {
+	
+	for (species_t i = 0; i < SPECIES_AMOUNT; i++) {
+		body_list_t* current_body = field.species_heads[i];
+		
+		while (current_body != NULL) {
+			body_draw(current_body->this, rend);
+			current_body = current_body->next;
+		}
+	}
+}
+
+void move_herbs() {
+	body_list_t* current_herb = field.species_heads[SPECIES_HERB];
+	int min_dist;
+	int dist;
+	Body* target_plant;
+	
+	while (current_herb != NULL) {
+		min_dist = SDL_MAX_SINT32;
+		target_plant = NULL;
+		
+		body_list_t* current_plant = field.species_heads[SPECIES_PLANT];
+		while (current_plant != NULL) {
+			dist = (int) vector_length(vector_sub(current_plant->this->position, current_herb->this->position));
+			if ((dist < 1500) && dist < min_dist) {
+				min_dist = dist;
+				target_plant = current_plant->this;
+			}
+			
+			current_plant = current_plant->next;
 		}
 		
-		draw_body(renderer, seeker);
-		SDL_RenderPresent(renderer);
-		SDL_Delay(10);
+		if (target_plant) {
+			body_seek(current_herb->this, target_plant->position);
+		}
+		
+		current_herb = current_herb->next;
+	}
+}
+
+void move_plants() {
+	body_list_t* current_plant = field.species_heads[SPECIES_PLANT];
+	int min_dist;
+	int dist;
+	Body* target_herb;
+	
+	while (current_plant != NULL) {
+		min_dist = SDL_MAX_SINT32;
+		target_herb = NULL;
+		
+		body_list_t* current_herb = field.species_heads[SPECIES_HERB];
+		while (current_herb != NULL) {
+			dist = (int) vector_length(vector_sub(current_herb->this->position, current_plant->this->position));
+			if ((dist < 20) && dist < min_dist) {
+				min_dist = dist;
+				target_herb = current_herb->this;
+			}
+			
+			current_herb = current_herb->next;
+		}
+		
+		if (target_herb) {
+			body_evade(current_plant->this, target_herb->position);
+			current_plant->this->health -= 1;
+			if (current_plant->this->health == 0) {
+			
+			}
+		}
+		
+		current_plant = current_plant->next;
+	}
+}
+
+
+int main(int argc, char* argv[]) {
+	SDL_Event event;
+	SDL_Window* win;
+	SDL_Renderer* rend;
+	Vector2_t mouse_pos;
+	uint32_t mouse_buttons;
+	int mouse_x, mouse_y;
+	
+	SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER);
+	
+	win = SDL_CreateWindow("Particles", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, SCR_WIDTH,
+						   SCR_HEIGHT, 0);
+	rend = SDL_CreateRenderer(win, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
+	
+	field_init(rend);
+	
+	bool run = true;
+	while (run) {
+		SDL_RenderClear(rend);
+		
+		SDL_PollEvent(&event);
+		
+		mouse_buttons = SDL_GetMouseState(&mouse_x, &mouse_y);
+		mouse_pos.x = mouse_x;
+		mouse_pos.y = mouse_y;
+		
+		switch (event.type) {
+			case SDL_QUIT:
+				run = false;
+				break;
+			case SDL_KEYDOWN:
+				switch (event.key.keysym.scancode) {
+					case SDL_SCANCODE_ESCAPE:
+						run = false;
+						break;
+					default:
+						break;
+				}
+				break;
+			default:
+				break;
+		}
+		
+		move_plants();
+		move_herbs();
+		
+		draw_bodies(rend);
+		SDL_RenderPresent(rend);
 	}
 	
-	SDL_DestroyRenderer(renderer);
-	SDL_DestroyWindow(window);
+	SDL_DestroyRenderer(rend);
+	SDL_DestroyWindow(win);
 	SDL_Quit();
 	return EXIT_SUCCESS;
 }
