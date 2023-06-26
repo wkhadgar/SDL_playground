@@ -5,7 +5,7 @@ set(CMAKE_C_STANDARD 11)
 
 file(GLOB_RECURSE SOURCES "simulation/*.c")
 
-include_directories(simulation assets)
+include_directories(simulation)
 
 add_executable(SDL_playground main.c ${SOURCES})
 
