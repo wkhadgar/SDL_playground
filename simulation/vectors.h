@@ -12,11 +12,20 @@
 #define MIN(a, b) ((a) > (b)) ? (b) : (a)
 
 typedef struct Vector2 {
-	double x;
-	double y;
+    double x;
+    double y;
 } Vector2_t;
 
+Vector2_t const horizontal_vec = {1, 0};
+Vector2_t const vertical_vec = {0, 1};
+
+double vector_length_sqr(Vector2_t vec);
+
 double vector_length(Vector2_t vec);
+
+double vector_dot(Vector2_t vec_a, Vector2_t vec_b);
+
+Vector2_t vector_perpendicular_norm(Vector2_t vec);
 
 Vector2_t vector_add(Vector2_t vec_a, Vector2_t vec_b);
 

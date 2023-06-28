@@ -5,17 +5,13 @@
 #include "vectors.h"
 #include "bodies.h"
 
-#define SCR_WIDTH 1500
-#define SCR_HEIGHT 1000
-
-#define PLANT_INIT_AMOUNT 1
-#define HERB_INIT_AMOUNT 1000
-#define CARN_INIT_AMOUNT 0
+#define INIT_CREATION_WIDTH 1000
+#define INIT_CREATION_HEIGHT 1000
 
 typedef enum {
     SPECIES_PLANT = 0,
-    SPECIES_HERB,
-    SPECIES_CARN,
+    SPECIES_PREY,
+    SPECIES_PREDATOR,
 
     SPECIES_AMOUNT,
 } species_t;
@@ -32,12 +28,6 @@ SDL_Texture* texture_from_img(SDL_Renderer* rend, char* path) {
 	SDL_FreeSurface(surf);
 	return tex;
 }
-
-typedef struct body_list {
-	Body* this;
-	struct body_list* next;
-	struct body_list* prev;
-} body_list_t;
 
 struct field {
 	body_list_t* species_heads[SPECIES_AMOUNT];
@@ -59,25 +49,25 @@ void add_body_node(Body* body, species_t species) {
 }
 
 int init_amounts[SPECIES_AMOUNT] = {
-		[SPECIES_PLANT] = PLANT_INIT_AMOUNT,
-		[SPECIES_HERB] = HERB_INIT_AMOUNT,
-		[SPECIES_CARN] = CARN_INIT_AMOUNT,
+        [SPECIES_PLANT] = 2,
+        [SPECIES_PREY] = 1000,
+        [SPECIES_PREDATOR] = 1,
 };
 
 double init_masses[SPECIES_AMOUNT] = {
         [SPECIES_PLANT] = 30,
-        [SPECIES_HERB] = 20,
-        [SPECIES_CARN] = 100,
+        [SPECIES_PREY] = 20,
+        [SPECIES_PREDATOR] = 30,
 };
 
 double init_speeds[SPECIES_AMOUNT] = {
         [SPECIES_PLANT] = 0.1,
-        [SPECIES_HERB] = 4,
-        [SPECIES_CARN] = 5,
+        [SPECIES_PREY] = 4,
+        [SPECIES_PREDATOR] = 20,
 };
 
 
-SDL_Rect window_boundary;
+SDL_Rect window_boundary = {0, 0, 0, 0};
 
 void create_bodies(species_t species, SDL_Texture* tex) {
     double mass_variance;
@@ -94,7 +84,8 @@ void create_bodies(species_t species, SDL_Texture* tex) {
         mass_variance = ((rand() % (int) mass_bias) - (mass_bias / 2)) / 100;
         speed_variance = ((rand() % (int) speed_bias) - (speed_bias / 2)) / 100;
 
-        add_body_node(body_new(rand() % SCR_WIDTH, rand() % SCR_HEIGHT, init_masses[species] + mass_variance, tex,
+        add_body_node(body_new((rand() % INIT_CREATION_WIDTH) + 400, (rand() % INIT_CREATION_HEIGHT),
+                               init_masses[species] + mass_variance, tex,
                                init_speeds[species] + speed_variance), species);
     }
 }
@@ -107,10 +98,10 @@ void field_init(SDL_Renderer* rend) {
             case SPECIES_PLANT:
                 tex = texture_from_img(rend, "assets\\seaweed.png");
                 break;
-            case SPECIES_HERB:
+            case SPECIES_PREY:
                 tex = texture_from_img(rend, "assets\\fish.png");
                 break;
-            case SPECIES_CARN:
+            case SPECIES_PREDATOR:
                 tex = texture_from_img(rend, "assets\\shark.png");
                 break;
             default:
@@ -134,86 +125,93 @@ void draw_bodies(SDL_Renderer* rend) {
 	}
 }
 
-void handle_herbs(bool to_mouse, Vector2_t m_pos) {
-    body_list_t* current_herb = field.species_heads[SPECIES_HERB];
-    int min_dist;
-    int dist;
-    Body const* target_plant;
+void handle_predators(bool to_mouse, Vector2_t m_pos) {
+    Body const* tgt_prey;
 
-    while (current_herb != NULL) {
-        min_dist = SDL_MAX_SINT32;
-        target_plant = NULL;
 
-        body_list_t* current_plant = field.species_heads[SPECIES_PLANT];
-        while (current_plant != NULL) {
-            dist = (int) vector_length(vector_sub(current_plant->this->position, current_herb->this->position));
-            if ((dist < 500) && dist < min_dist) {
-                min_dist = dist;
-                target_plant = current_plant->this;
+    body_list_t* current_predator = field.species_heads[SPECIES_PREDATOR];
+    while (current_predator != NULL) {
+
+        if (to_mouse) {
+            body_seek(current_predator->this, m_pos);
+        } else if (!body_keep_inside(current_predator->this, window_boundary)) {
+            tgt_prey = body_get_closest_body_from(current_predator->this, field.species_heads[SPECIES_PREY], 500);
+
+            if (tgt_prey) {
+                body_seek(current_predator->this, tgt_prey->position);
+            } else {
+                body_wander(current_predator->this);
             }
+        }
 
-            current_plant = current_plant->next;
+        current_predator = current_predator->next;
+    }
+}
+
+void handle_preys(bool to_mouse, Vector2_t m_pos) {
+    Body* tgt_predator;
+    Body const* tgt_plant;
+
+
+    body_list_t* current_prey = field.species_heads[SPECIES_PREY];
+    while (current_prey != NULL) {
+
+        if (current_prey->this->health <= 0) {
+            body_list_t* tmp = current_prey;
+            current_prey = current_prey->next;
+            body_list_delete_node(&field.species_heads[SPECIES_PREY], tmp);
+            continue;
         }
 
         if (to_mouse) {
-            body_seek(current_herb->this, m_pos);
-        } else if (target_plant) {
-            body_arrive(current_herb->this, target_plant->position);
-        } else {
-            body_wander(current_herb->this);
+            body_seek(current_prey->this, m_pos);
+        } else if (!body_keep_inside(current_prey->this, window_boundary)) {
+            tgt_predator = body_get_closest_body_from(current_prey->this, field.species_heads[SPECIES_PREDATOR], 250);
+            tgt_plant = body_get_closest_body_from(current_prey->this, field.species_heads[SPECIES_PLANT], 350);
+
+            if (tgt_predator) {
+                if (SDL_HasIntersection(&tgt_predator->collision_rect, &current_prey->this->rect) == SDL_TRUE) {
+                    current_prey->this->health -= 5;
+                    tgt_predator->health += 1;
+                    body_grow(tgt_predator, current_prey->this->mass / 200);
+                }
+                body_flee(current_prey->this, tgt_predator->position);
+            } else if (tgt_plant) {
+                body_arrive(current_prey->this, tgt_plant->position);
+            } else {
+                body_wander(current_prey->this);
+            }
         }
 
-        body_keep_inside(current_herb->this, window_boundary);
-        current_herb = current_herb->next;
+        current_prey = current_prey->next;
     }
 }
 
 void handle_plants() {
-	body_list_t* current_plant = field.species_heads[SPECIES_PLANT];
-	int min_dist;
-	int dist;
-	Body* target_herb;
+    Body* tgt_herb;
 
-    int debug = 0;
-	
-	while (current_plant != NULL) {
-        debug++;
-		min_dist = SDL_MAX_SINT32;
-		target_herb = NULL;
-		
-		body_list_t* current_herb = field.species_heads[SPECIES_HERB];
-		while (current_herb != NULL) {
-			dist = (int) vector_length(vector_sub(current_herb->this->position, current_plant->this->position));
-			if ((dist < (current_plant->this->rect.w/2)) && dist < min_dist) {
-				min_dist = dist;
-				target_herb = current_herb->this;
-			}
-			
-			current_herb = current_herb->next;
-		}
-		
-		if (target_herb) {
-            body_arrive(current_plant->this, target_herb->position);
-            current_plant->this->health -= 1;
-            target_herb->health += 1;
-            if (current_plant->this->health == 0) {
-                body_list_t* tmp = current_plant;
-                if (current_plant->prev) {
-                    current_plant->prev->next = current_plant->next;
-                } else {
-                    field.species_heads[SPECIES_PLANT] = current_plant->next;
-                }
-                if (current_plant->next) {
-                    current_plant->next->prev = current_plant->prev;
-                }
-                current_plant = current_plant->next;
-                free(tmp);
-                continue;
-            }
+    body_list_t* current_plant = field.species_heads[SPECIES_PLANT];
+    while (current_plant != NULL) {
+
+        if (current_plant->this->health <= 0) {
+            body_list_t* tmp = current_plant;
+            current_plant = current_plant->next;
+            body_list_delete_node(&field.species_heads[SPECIES_PLANT], tmp);
+            continue;
         }
-		
-		current_plant = current_plant->next;
-	}
+
+        tgt_herb = body_get_closest_body_from(current_plant->this, field.species_heads[SPECIES_PREY],
+                                              current_plant->this->rect.w);
+
+        if (tgt_herb) {
+            body_arrive(current_plant->this, tgt_herb->position);
+            current_plant->this->health -= 1;
+            tgt_herb->health += 1;
+            body_grow(tgt_herb, current_plant->this->mass / 1000);
+        }
+
+        current_plant = current_plant->next;
+    }
 }
 
 int main(int argc, char* argv[]) {
@@ -227,17 +225,13 @@ int main(int argc, char* argv[]) {
 
     SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER);
 
-    window_boundary.x = 0;
-    window_boundary.y = 0;
-    win = SDL_CreateWindow("Particles", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, SCR_WIDTH,
-                           SCR_HEIGHT, 0);
+    win = SDL_CreateWindow("Particles", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, INIT_CREATION_WIDTH,
+                           INIT_CREATION_HEIGHT, SDL_WINDOW_FULLSCREEN_DESKTOP);
+    SDL_Metal_GetDrawableSize(win, &window_boundary.w, &window_boundary.h);
 
-    window_boundary.w = SCR_WIDTH;
-    window_boundary.h = SCR_HEIGHT;
     rend = SDL_CreateRenderer(win, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
 
     field_init(rend);
-
     bool run = true;
     while (run) {
         SDL_RenderClear(rend);
@@ -265,13 +259,13 @@ int main(int argc, char* argv[]) {
                 break;
         }
 
-        handle_herbs((mouse_buttons & SDL_BUTTON(SDL_BUTTON_LEFT)), mouse_pos);
-        handle_plants();
-
         draw_bodies(rend);
         SDL_RenderPresent(rend);
 
-        SDL_Delay(1000 / 60);
+        handle_plants();
+        handle_preys((mouse_buttons & SDL_BUTTON(SDL_BUTTON_LEFT)), mouse_pos);
+        handle_predators((mouse_buttons & SDL_BUTTON(SDL_BUTTON_RIGHT)), mouse_pos);
+
     }
 
     SDL_DestroyRenderer(rend);

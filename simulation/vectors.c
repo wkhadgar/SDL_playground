@@ -4,6 +4,10 @@
 
 #include "vectors.h"
 
+double vector_length_sqr(Vector2_t vec) {
+    return (vec.x * vec.x) + (vec.y * vec.y);
+}
+
 double vector_length(Vector2_t vec) {
     return sqrt((vec.x * vec.x) + (vec.y * vec.y));
 }
@@ -36,4 +40,14 @@ Vector2_t vector_add(Vector2_t vec_a, Vector2_t vec_b) {
 
 Vector2_t vector_normalize(Vector2_t vec) {
     return vector_scale(vec, 1 / vector_length(vec));
+}
+
+double vector_dot(Vector2_t vec_a, Vector2_t vec_b) {
+    return (vec_a.x * vec_b.x) + (vec_a.y * vec_b.y);
+}
+
+Vector2_t vector_perpendicular_norm(Vector2_t vec) {
+    double dot_h = vector_dot(vec, horizontal_vec);
+    double dot_v = vector_dot(vec, vertical_vec);
+    //TODO
 }
